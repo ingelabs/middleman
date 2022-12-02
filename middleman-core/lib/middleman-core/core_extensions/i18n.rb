@@ -151,7 +151,9 @@ class Middleman::CoreExtensions::Internationalization < ::Middleman::Extension
     new_resources = []
 
     file_extension_resources = resources.select do |resource|
-      parse_locale_extension(resource.path)
+      # Ignore resources outside of the localizable directory
+      File.fnmatch?(File.join(options[:templates_dir], '**'), resource.path) &&
+        parse_locale_extension(resource.path)
     end
 
     localizable_folder_resources = resources.select do |resource|
@@ -190,10 +192,32 @@ class Middleman::CoreExtensions::Internationalization < ::Middleman::Extension
       resource.ignore!
     end
 
-    @lookup = new_resources.each_with_object({}) do |desc, sum|
-      abs_path = desc.source_path.sub(options[:templates_dir], '')
-      sum[abs_path] ||= {}
-      sum[abs_path][desc.locale] = '/' + desc.path
+    source_path_group = new_resources.group_by do |resource|
+      # Try to get source path without extension
+      _locale, path, _page_id = parse_locale_extension(resource.source_path)
+
+      # If that fails, there is no extension, so we use the original path. We
+      # can not use resource.path here, because .path may be translated, so the
+      # file names do not match up.
+      path ||= resource.source_path
+
+      # This will contain the localizable/ directory, but that does not matter,
+      # because it will be contained in both alternatives above, so the
+      # grouping key will be correct.
+      path
+    end
+
+    @lookup = {}
+    source_path_group.each do |path, resources|
+      # Generate a map with the paths the user sees and the locales as keys.
+      # e.g. {:en => '/en/index.html', :de => '/de/index.html', :es => '/index.html'}
+      # or   {:en => '/en/hello.html', :de => '/de/hallo.html', :es => '/hola.html'}
+      locale_map = resources.each_with_object({}) do |resource, map|
+        map[resource.locale] = '/' + resource.path
+      end
+
+      # Finally, add it without /:localizable prefix
+      @lookup[path.sub(options[:templates_dir], '')] = locale_map
     end
 
     new_resources.reduce(resources) do |sum, r|
